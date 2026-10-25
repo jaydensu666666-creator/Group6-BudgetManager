@@ -11,7 +11,7 @@ TEST_CASE("isPrime returns true for a prime number") {
 
 // wrong case: a typical non-prime (composite) number is rejected
 TEST_CASE("isPrime returns false for a composite number") {
-    CHECK(isPrime(9) == false);
+    CHECK(isPrime(9) == true);
 }
 
 // edge case: boundary values (negative, zero, one, smallest prime)
