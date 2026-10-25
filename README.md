@@ -1,27 +1,52 @@
-# MyProject
+# Group 6 - Budget Manager
 
-A Qt desktop app template for CSCI 187 team projects. Each team uses this
-repo as their starting point.
+## Project Description
 
-## One-time setup
+Budget Manager is a C++ application that helps users record expenses and track their remaining budget.
 
-1. Install [VS Code](https://code.visualstudio.com/), [CMake](https://cmake.org/download/),
-   and [Qt](https://www.qt.io/download-qt-installer) (Widgets module, version 5).
-2. In VS Code, sign in to GitHub using the account icon in the bottom-left
-   corner of the window. **Do not create a Personal Access Token** — the
-   account icon sign-in flow is all you need, and PATs are unnecessary for
-   this course and easy to leak.
-3. On GitHub, click **Use this template** on this repository to create your
-   team's own copy.
-4. Clone your team's new repository and open it in VS Code.
+Our Walking Skeleton focuses on recording expenses. Users can enter an expense amount, and the application automatically updates the remaining budget.
 
-## Building and running locally
+## Requirements
 
-These are the exact same three commands CI runs (once it's turned on — see
-below), so if they pass locally they'll pass in CI too:
+- C++17
+- CMake 3.16 or newer
+- Qt6 (Widgets and SQL)
 
+## Setup
+
+1. Clone the repository:
+
+```bash
+git clone https://github.com/jaydensu666666-creator/Group6-BudgetManager.git
 ```
-cmake -B build
+
+2. Navigate to the project folder:
+
+```bash
+cd Group6-BudgetManager
+```
+
+3. Configure and build the project:
+
+```bash
+cmake -S . -B build
 cmake --build build
+```
+
+For macOS users experiencing SDK compatibility issues, if macOS 26.5 SDK is installed, configure with:
+
+```bash
+cmake -S . -B build -DCMAKE_OSX_SYSROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+```
+
+## Run the Application
+
+```bash
+./build/app
+```
+
+## Run Unit Tests
+
+```bash
 ctest --test-dir build --output-on-failure
 ```
