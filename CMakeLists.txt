@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(MyProject)
+project(BudgetManager)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,7 +30,7 @@ target_include_directories(app PRIVATE src)
 
 # The test binary: every test file, plus your source files except main.cpp.
 # In this class we only write tests for model classes, not view or
-# controller files. Copy tests/test_prime.cpp as a starting point for a
+# controller files. Copy one of the other tests/*.cpp files as a starting point for a
 # new test file — no special #define needed at the top.
 add_executable(test_build ${TEST_SOURCES} ${APP_SOURCES_NO_MAIN})
 target_link_libraries(test_build PRIVATE Qt6::Widgets Qt6::Sql)
