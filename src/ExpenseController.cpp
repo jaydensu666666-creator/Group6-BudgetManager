@@ -1,42 +1,36 @@
 #include "ExpenseController.h"
 
-#include <QLocale>
-
 #include "BudgetRepository.h"
 #include "Money.h"
 
 namespace {
 
-const char* const BAD_AMOUNT_MESSAGE = "Enter the amount as a number, like 12.50.";
-
-QString shortDate(const QDate& date) {
-    return QLocale(QLocale::English).toString(date, "MMM d, yyyy");
-}
-
-QString expenseErrorMessage(ExpenseError error, const Budget& budget) {
+// The model's reasons are part of what the view can show; this keeps the
+// controller's result free of any sentence.
+ExpenseActionError toActionError(ExpenseError error) {
     switch (error) {
     case ExpenseError::AmountNotPositive:
-        return "Enter an amount greater than $0, like 12.50.";
+        return ExpenseActionError::AmountNotPositive;
     case ExpenseError::AmountTooLarge:
-        return "That amount is too large. Enter up to " + Money::format(Money::MAX_AMOUNT) + ".";
+        return ExpenseActionError::AmountTooLarge;
     case ExpenseError::InvalidDate:
-        return "Pick a date for this expense.";
+        return ExpenseActionError::InvalidDate;
     case ExpenseError::BeforeTermStart:
-        return "This date is before your term started (" + shortDate(budget.getStartDate()) + ").";
+        return ExpenseActionError::BeforeTermStart;
     case ExpenseError::OnOrAfterNextTransfer:
-        return "This date is on or after your next transfer (" + shortDate(budget.getNextTransferDate()) +
-               "). Set up your new term first.";
+        return ExpenseActionError::OnOrAfterNextTransfer;
     case ExpenseError::DescriptionTooLong:
-        return QString("Keep the description to %1 characters or fewer.").arg(Budget::MAX_DESCRIPTION_LENGTH);
+        return ExpenseActionError::DescriptionTooLong;
     case ExpenseError::DuplicateId:
+        return ExpenseActionError::DuplicateId;
     case ExpenseError::NotFound:
-        return "That expense is no longer in your list.";
+        return ExpenseActionError::NotFound;
     case ExpenseError::NothingToUndo:
-        return "There is nothing to undo.";
+        return ExpenseActionError::NothingToUndo;
     case ExpenseError::None:
         break;
     }
-    return QString();
+    return ExpenseActionError::None;
 }
 
 }  // namespace
@@ -48,55 +42,63 @@ bool ExpenseController::hasTerm() const {
     return budget.hasTerm();
 }
 
-QString ExpenseController::describe(const Expense& expense) const {
-    QString text = Money::format(expense.amount);
-    if (!expense.description.isEmpty()) {
-        text += " for " + expense.description;
-    }
-    return text + " on " + shortDate(expense.date);
+ExpenseActionResult ExpenseController::newResult() const {
+    ExpenseActionResult result;
+    result.termStartDate = budget.getStartDate();
+    result.nextTransferDate = budget.getNextTransferDate();
+    result.totalSpent = budget.getTotalExpenses();
+    result.remainingAmount = budget.getRemainingBudget();
+    return result;
 }
 
-QString ExpenseController::totalsSentence() const {
-    // Shown right after every change so the user sees what they spent without
-    // switching tabs (M1 feedback).
-    return " Spent so far: " + Money::format(budget.getTotalExpenses()) +
-           ". Left to spend: " + Money::format(budget.getRemainingBudget()) + ".";
-}
-
-ActionResult ExpenseController::addExpense(const QString& amountText, const QDate& date,
-                                           const QString& description) {
+ExpenseActionResult ExpenseController::addExpense(const QString& amountText, const QDate& date,
+                                                  const QString& description) {
+    ExpenseActionResult result = newResult();
     if (!budget.hasTerm()) {
-        return ActionResult::failure(NO_TERM_MESSAGE);
+        result.error = ExpenseActionError::NoTerm;
+        return result;
     }
     Expense expense;
     if (!Money::parse(amountText, expense.amount)) {
-        return ActionResult::failure(BAD_AMOUNT_MESSAGE);
+        result.error = ExpenseActionError::BadAmountText;
+        return result;
     }
-    expense.id = budget.nextExpenseId();
+    // Purchase ids are unique across every term, so the next one comes from the database.
+    expense.id = repository.nextExpenseId();
     expense.date = date;
     expense.description = description;
 
     const Budget before = budget;
     const ExpenseError error = budget.addExpense(expense);
     if (error != ExpenseError::None) {
-        return ActionResult::failure(expenseErrorMessage(error, budget));
+        result.error = toActionError(error);
+        return result;
     }
     const Expense stored = *budget.findExpense(expense.id);
-    if (!repository.insertExpense(stored)) {
+    if (!repository.insertExpense(budget.getBudgetId(), stored)) {
         budget = before;  // keep the screen and the database telling the same story
-        return ActionResult::failure("Couldn't save the expense: " + repository.lastError());
+        result.error = ExpenseActionError::SaveFailed;
+        result.saveError = repository.lastError();
+        return result;
     }
-    return ActionResult::success("Added " + describe(stored) + "." + totalsSentence());
+    result = newResult();
+    result.ok = true;
+    result.action = ExpenseAction::Added;
+    result.expense = stored;
+    return result;
 }
 
-ActionResult ExpenseController::updateExpense(int expenseId, const QString& amountText, const QDate& date,
-                                              const QString& description) {
+ExpenseActionResult ExpenseController::updateExpense(int expenseId, const QString& amountText,
+                                                     const QDate& date, const QString& description) {
+    ExpenseActionResult result = newResult();
     std::optional<Expense> changed = budget.findExpense(expenseId);
     if (!changed) {
-        return ActionResult::failure(expenseErrorMessage(ExpenseError::NotFound, budget));
+        result.error = ExpenseActionError::NotFound;
+        return result;
     }
     if (!Money::parse(amountText, changed->amount)) {
-        return ActionResult::failure(BAD_AMOUNT_MESSAGE);
+        result.error = ExpenseActionError::BadAmountText;
+        return result;
     }
     changed->date = date;
     changed->description = description;
@@ -104,84 +106,96 @@ ActionResult ExpenseController::updateExpense(int expenseId, const QString& amou
     const Budget before = budget;
     const ExpenseError error = budget.updateExpense(*changed);
     if (error != ExpenseError::None) {
-        return ActionResult::failure(expenseErrorMessage(error, budget));
+        result.error = toActionError(error);
+        return result;
     }
     const Expense stored = *budget.findExpense(expenseId);
     if (!repository.updateExpense(stored)) {
         budget = before;
-        return ActionResult::failure("Couldn't save the change: " + repository.lastError());
+        result.error = ExpenseActionError::SaveFailed;
+        result.saveError = repository.lastError();
+        return result;
     }
-    return ActionResult::success("Changed to " + describe(stored) + "." + totalsSentence());
+    result = newResult();
+    result.ok = true;
+    result.action = ExpenseAction::Updated;
+    result.expense = stored;
+    return result;
 }
 
-ActionResult ExpenseController::removeExpense(int expenseId) {
+ExpenseActionResult ExpenseController::removeExpense(int expenseId) {
+    ExpenseActionResult result = newResult();
     const std::optional<Expense> removed = budget.findExpense(expenseId);
     if (!removed) {
-        return ActionResult::failure(expenseErrorMessage(ExpenseError::NotFound, budget));
+        result.error = ExpenseActionError::NotFound;
+        return result;
     }
     const Budget before = budget;
     budget.removeExpense(expenseId);
     if (!repository.deleteExpense(expenseId)) {
         budget = before;
-        return ActionResult::failure("Couldn't remove the expense: " + repository.lastError());
+        result.error = ExpenseActionError::SaveFailed;
+        result.saveError = repository.lastError();
+        return result;
     }
-    return ActionResult::success("Removed " + describe(*removed) + ". Press Undo to bring it back." +
-                                 totalsSentence());
+    result = newResult();
+    result.ok = true;
+    result.action = ExpenseAction::Removed;
+    result.expense = *removed;
+    return result;
 }
 
-ActionResult ExpenseController::undoLastChange() {
+ExpenseActionResult ExpenseController::undoLastChange() {
+    ExpenseActionResult result = newResult();
     const std::optional<ExpenseChange> change = budget.getLastChange();
     if (!change) {
-        return ActionResult::failure(expenseErrorMessage(ExpenseError::NothingToUndo, budget));
+        result.error = ExpenseActionError::NothingToUndo;
+        return result;
     }
     const Budget before = budget;
     const ExpenseError error = budget.undoLastChange();
     if (error != ExpenseError::None) {
-        return ActionResult::failure("Can't undo: " + expenseErrorMessage(error, budget));
+        result.error = toActionError(error);
+        return result;
     }
 
     const Expense& expense = change->before;
     bool saved = false;
-    QString message;
     switch (change->type) {
     case ExpenseChange::Type::Added:
         saved = repository.deleteExpense(expense.id);
-        message = "Undone. " + describe(expense) + " was taken out again.";
         break;
     case ExpenseChange::Type::Edited:
         saved = repository.updateExpense(expense);
-        message = "Undone. The expense is back to " + describe(expense) + ".";
         break;
     case ExpenseChange::Type::Removed:
-        saved = repository.insertExpense(expense);
-        message = "Undone. " + describe(expense) + " is back in your list.";
+        saved = repository.insertExpense(budget.getBudgetId(), expense);
         break;
     }
     if (!saved) {
         budget = before;
-        return ActionResult::failure("Couldn't undo: " + repository.lastError());
+        result.error = ExpenseActionError::SaveFailed;
+        result.saveError = repository.lastError();
+        return result;
     }
-    return ActionResult::success(message + totalsSentence());
+    result = newResult();
+    result.ok = true;
+    result.action = ExpenseAction::Undone;
+    result.undoneChange = change->type;
+    result.expense = expense;
+    return result;
 }
 
 bool ExpenseController::canUndo() const {
     return budget.getLastChange().has_value();
 }
 
-QString ExpenseController::undoLabel() const {
+std::optional<ExpenseChange::Type> ExpenseController::lastChangeType() const {
     const std::optional<ExpenseChange> change = budget.getLastChange();
     if (!change) {
-        return "Undo";
+        return std::nullopt;
     }
-    switch (change->type) {
-    case ExpenseChange::Type::Added:
-        return "Undo add";
-    case ExpenseChange::Type::Edited:
-        return "Undo edit";
-    case ExpenseChange::Type::Removed:
-        return "Undo remove";
-    }
-    return "Undo";
+    return change->type;
 }
 
 std::vector<Expense> ExpenseController::expensesNewestFirst() const {

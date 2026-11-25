@@ -19,6 +19,99 @@ namespace {
 
 enum Column { DATE_COLUMN, DESCRIPTION_COLUMN, AMOUNT_COLUMN, COLUMN_COUNT };
 
+const char* const NO_TERM_MESSAGE = "Set up your term first on the Term setup tab.";
+
+QString shortDate(const QDate& date) {
+    return QLocale(QLocale::English).toString(date, "MMM d, yyyy");
+}
+
+QString describe(const Expense& expense) {
+    QString text = Money::format(expense.amount);
+    if (!expense.description.isEmpty()) {
+        text += " for " + expense.description;
+    }
+    return text + " on " + shortDate(expense.date);
+}
+
+QString totalsSentence(const ExpenseActionResult& result) {
+    // Shown right after every change so the user sees what they spent without
+    // switching tabs (M1 feedback).
+    return " Spent so far: " + Money::format(result.totalSpent) +
+           ". Left to spend: " + Money::format(result.remainingAmount) + ".";
+}
+
+// The page writes every sentence the user reads; the controller only says what
+// happened (M2 feedback: messages do not belong in the controllers).
+QString messageFor(const ExpenseActionResult& result) {
+    if (result.ok) {
+        switch (result.action) {
+        case ExpenseAction::Added:
+            return "Added " + describe(result.expense) + "." + totalsSentence(result);
+        case ExpenseAction::Updated:
+            return "Changed to " + describe(result.expense) + "." + totalsSentence(result);
+        case ExpenseAction::Removed:
+            return "Removed " + describe(result.expense) + ". Press Undo to bring it back." +
+                   totalsSentence(result);
+        case ExpenseAction::Undone:
+            switch (result.undoneChange) {
+            case ExpenseChange::Type::Added:
+                return "Undone. " + describe(result.expense) + " was taken out again." + totalsSentence(result);
+            case ExpenseChange::Type::Edited:
+                return "Undone. The expense is back to " + describe(result.expense) + "." + totalsSentence(result);
+            case ExpenseChange::Type::Removed:
+                return "Undone. " + describe(result.expense) + " is back in your list." + totalsSentence(result);
+            }
+            break;
+        case ExpenseAction::None:
+            break;
+        }
+    }
+    switch (result.error) {
+    case ExpenseActionError::NoTerm:
+        return NO_TERM_MESSAGE;
+    case ExpenseActionError::BadAmountText:
+        return "Enter the amount as a number, like 12.50.";
+    case ExpenseActionError::AmountNotPositive:
+        return "Enter an amount greater than $0, like 12.50.";
+    case ExpenseActionError::AmountTooLarge:
+        return "That amount is too large. Enter up to " + Money::format(Money::MAX_AMOUNT) + ".";
+    case ExpenseActionError::InvalidDate:
+        return "Pick a date for this expense.";
+    case ExpenseActionError::BeforeTermStart:
+        return "This date is before your term started (" + shortDate(result.termStartDate) + ").";
+    case ExpenseActionError::OnOrAfterNextTransfer:
+        return "This date is on or after your next transfer (" + shortDate(result.nextTransferDate) +
+               "). Set up your new term first.";
+    case ExpenseActionError::DescriptionTooLong:
+        return QString("Keep the description to %1 characters or fewer.").arg(ExpenseController::MAX_DESCRIPTION_LENGTH);
+    case ExpenseActionError::DuplicateId:
+    case ExpenseActionError::NotFound:
+        return "That expense is no longer in your list.";
+    case ExpenseActionError::NothingToUndo:
+        return "There is nothing to undo.";
+    case ExpenseActionError::SaveFailed:
+        return "Couldn't save: " + result.saveError;
+    case ExpenseActionError::None:
+        break;
+    }
+    return QString();
+}
+
+QString undoLabel(const std::optional<ExpenseChange::Type>& type) {
+    if (!type) {
+        return "Undo";
+    }
+    switch (*type) {
+    case ExpenseChange::Type::Added:
+        return "Undo add";
+    case ExpenseChange::Type::Edited:
+        return "Undo edit";
+    case ExpenseChange::Type::Removed:
+        return "Undo remove";
+    }
+    return "Undo";
+}
+
 }  // namespace
 
 ExpensesView::ExpensesView(ExpenseController& controller, QWidget* parent)
@@ -116,8 +209,8 @@ void ExpensesView::refresh() {
         input->setEnabled(hasTerm);
     }
     if (!hasTerm) {
-        showMessage(false, ExpenseController::NO_TERM_MESSAGE);
-    } else if (messageLabel->text() == ExpenseController::NO_TERM_MESSAGE) {
+        showMessage(false, NO_TERM_MESSAGE);
+    } else if (messageLabel->text() == NO_TERM_MESSAGE) {
         messageLabel->clear();  // the term was just set up, so the hint is no longer true
     }
     if (editingId == NOT_EDITING) {
@@ -142,7 +235,7 @@ void ExpensesView::refresh() {
     editButton->setEnabled(false);
     removeButton->setEnabled(false);
     undoButton->setEnabled(controller.canUndo());
-    undoButton->setText(controller.undoLabel());
+    undoButton->setText(undoLabel(controller.lastChangeType()));
 }
 
 int ExpensesView::selectedExpenseId() const {
@@ -154,11 +247,11 @@ int ExpensesView::selectedExpenseId() const {
 }
 
 void ExpensesView::submitForm() {
-    const ActionResult result =
+    const ExpenseActionResult result =
         editingId == NOT_EDITING
             ? controller.addExpense(amountInput->text(), dateInput->date(), descriptionInput->text())
             : controller.updateExpense(editingId, amountInput->text(), dateInput->date(), descriptionInput->text());
-    showMessage(result.ok, result.message);
+    showMessage(result.ok, messageFor(result));
     if (result.ok) {
         clearForm();
         emit changed();
@@ -192,8 +285,8 @@ void ExpensesView::removeSelected() {
         return;
     }
     // No "are you sure" dialog: removing is safe because Undo brings it back.
-    const ActionResult result = controller.removeExpense(expenseId);
-    showMessage(result.ok, result.message);
+    const ExpenseActionResult result = controller.removeExpense(expenseId);
+    showMessage(result.ok, messageFor(result));
     if (result.ok) {
         if (editingId == expenseId) {
             clearForm();
@@ -203,8 +296,8 @@ void ExpensesView::removeSelected() {
 }
 
 void ExpensesView::undo() {
-    const ActionResult result = controller.undoLastChange();
-    showMessage(result.ok, result.message);
+    const ExpenseActionResult result = controller.undoLastChange();
+    showMessage(result.ok, messageFor(result));
     if (result.ok) {
         // Undo can take away the expense being edited, so leave edit mode.
         if (editingId != NOT_EDITING) {
@@ -214,7 +307,7 @@ void ExpensesView::undo() {
     }
     // A refused undo is also used up, so the button state may have changed.
     undoButton->setEnabled(controller.canUndo());
-    undoButton->setText(controller.undoLabel());
+    undoButton->setText(undoLabel(controller.lastChangeType()));
 }
 
 void ExpensesView::clearForm() {

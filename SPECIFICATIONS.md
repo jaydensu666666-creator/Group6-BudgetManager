@@ -23,8 +23,11 @@ S-5 (UR-3): The system shall let the user change the money received, the amount
 set aside, and the dates at any time. Recorded purchases are kept. New dates that
 would leave one of this term's purchases outside the term are refused with a
 message. Once the next transfer date has passed, a start date on or after it
-starts a new term instead: last term's purchases stay saved but are no longer
-counted or listed. Starting the next term before the transfer date is refused, so
+starts a new term instead: the new term is saved as its own row in the budget
+table, and last term's purchases stay with last term's row. A purchase belongs to
+its term by budget_id, never by its date, so changing the new term's dates can
+not bring last term's purchases into its totals, and the new term starts with
+nothing to undo. Starting the next term before the transfer date is refused, so
 the running term's purchases are never hidden early.
 
 ## Main Feature: Recording money in and out
@@ -43,7 +46,7 @@ Anything else is rejected with a message that says what to fix, and nothing is
 saved.
 
 S-7 (UR-4): The system shall add a valid purchase to the list with an id that no
-other purchase in the list has.
+other saved purchase has, in this term or in any earlier term.
 
 S-8 (UR-5): The system shall let the user correct the amount, date and note of a
 recorded purchase. The same rules as S-6 apply; a rejected correction leaves the
@@ -89,7 +92,9 @@ and never more than the money left in the term.
 S-15 (UR-3, UR-4 to UR-7): The system shall save the term and every purchase in a
 SQLite database (budget.db in the user's app data folder) right after each change
 and load them when the app starts, so nothing is lost when the app closes. The
-tables match the ER diagram in docs/.
+budget table has one row per term, and every purchase row names the term it
+belongs to, so a purchase belongs to its term by budget_id and not by its date.
+The tables match the ER diagram in docs/.
 
 S-16 (UR-9 to UR-11): The system shall show money with a dollar sign, two
 decimals and thousands separators, with the minus sign before the dollar sign

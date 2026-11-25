@@ -87,9 +87,11 @@ void StatusView::refresh() {
     moneyLeftLabel->setStyleSheet(colored(overspent ? ViewStyle::ERROR_COLOR : ViewStyle::OK_COLOR, 36, true));
     spendableLabel->setText("out of " + Money::format(status.spendableAmount) + " you can spend this term");
 
-    QString details = QString("Spent so far: %1\nSet aside for saving: %2\nMoney received: %3")
-                          .arg(Money::format(status.totalSpent), Money::format(status.savingsAmount),
-                               Money::format(status.receivedAmount));
+    // Show the working, not only the answer (M2 feedback): the user asked how much
+    // is left, and this says how the app got there.
+    QString details = QString("Money received: %1\nMinus set aside for saving: %2\nMinus spent: %3\n= Money left to spend: %4")
+                          .arg(Money::format(status.receivedAmount), Money::format(status.savingsAmount),
+                               Money::format(status.totalSpent), Money::format(status.moneyLeft));
 
     if (status.termOver) {
         setUpButton->setText("Start your next term");

@@ -2,8 +2,10 @@
 // is an ordinary doctest file, written in the same style as the other tests.
 //
 // Author: Tianbin Liu
-// Tests saving the term and expenses in SQLite (S-15): what is saved comes back
-// the same after the app restarts, and the SQL total matches the model's total.
+// Tests saving the terms and expenses in SQLite (S-15): what is saved comes back
+// the same after the app restarts, the SQL total matches the model's total, and
+// the budget table has one row per term so a purchase belongs to its own term
+// (M2 feedback).
 #include "doctest.h"
 
 #include <optional>
@@ -20,6 +22,7 @@
 
 namespace {
 const QDate START(2026, 11, 2);
+const QDate NEXT_TRANSFER(2026, 12, 2);
 
 // Qt only loads its SQLite driver once an application object exists. The app
 // makes one in main(); the test binary has no Qt main, so these tests make one.
@@ -31,7 +34,6 @@ void requireQtApplication() {
         QCoreApplication::instance() ? nullptr : new QCoreApplication(argc, argv);
     (void)app;
 }
-const QDate NEXT_TRANSFER(2026, 12, 2);
 
 Budget sampleBudget() {
     Budget budget;
@@ -41,10 +43,11 @@ Budget sampleBudget() {
     return budget;
 }
 
-void saveAll(BudgetRepository& repository, const Budget& budget) {
+// Saving the term gives the budget its row id, which the purchases are saved under.
+void saveAll(BudgetRepository& repository, Budget& budget) {
     REQUIRE(repository.saveTerm(budget));
     for (const Expense& expense : budget.getExpenses()) {
-        REQUIRE(repository.insertExpense(expense));
+        REQUIRE(repository.insertExpense(budget.getBudgetId(), expense));
     }
 }
 }  // namespace
@@ -57,17 +60,19 @@ TEST_CASE("An empty database loads as no term") {
 
     CHECK_FALSE(repository.load().has_value());
     CHECK(repository.totalSpent() == 0.0);
+    CHECK(repository.nextExpenseId() == 1);
 }
 
 // normal case: the term and every expense come back exactly as saved
 TEST_CASE("Saved term and expenses load back the same") {
     requireQtApplication();
     BudgetRepository repository(":memory:");
-    const Budget original = sampleBudget();
+    Budget original = sampleBudget();
     saveAll(repository, original);
 
     const std::optional<Budget> loaded = repository.load();
     REQUIRE(loaded);
+    CHECK(loaded->getBudgetId() == original.getBudgetId());
     CHECK(loaded->getReceivedAmount() == doctest::Approx(1300.0));
     CHECK(loaded->getSavingsAmount() == doctest::Approx(100.0));
     CHECK(loaded->getStartDate() == START);
@@ -85,7 +90,7 @@ TEST_CASE("Saved term and expenses load back the same") {
 TEST_CASE("totalSpent adds up the saved expenses with SQL") {
     requireQtApplication();
     BudgetRepository repository(":memory:");
-    const Budget budget = sampleBudget();
+    Budget budget = sampleBudget();
     saveAll(repository, budget);
 
     CHECK(repository.totalSpent() == doctest::Approx(55.5));
@@ -96,7 +101,8 @@ TEST_CASE("totalSpent adds up the saved expenses with SQL") {
 TEST_CASE("updateExpense saves the corrected values") {
     requireQtApplication();
     BudgetRepository repository(":memory:");
-    saveAll(repository, sampleBudget());
+    Budget budget = sampleBudget();
+    saveAll(repository, budget);
 
     CHECK(repository.updateExpense({1, 45.0, QDate(2026, 11, 6), "Groceries and soap"}));
     const std::optional<Budget> loaded = repository.load();
@@ -111,7 +117,8 @@ TEST_CASE("updateExpense saves the corrected values") {
 TEST_CASE("deleteExpense removes the row") {
     requireQtApplication();
     BudgetRepository repository(":memory:");
-    saveAll(repository, sampleBudget());
+    Budget budget = sampleBudget();
+    saveAll(repository, budget);
 
     CHECK(repository.deleteExpense(1));
     const std::optional<Budget> loaded = repository.load();
@@ -125,7 +132,8 @@ TEST_CASE("deleteExpense removes the row") {
 TEST_CASE("updateExpense and deleteExpense fail for an unknown expense") {
     requireQtApplication();
     BudgetRepository repository(":memory:");
-    saveAll(repository, sampleBudget());
+    Budget budget = sampleBudget();
+    saveAll(repository, budget);
 
     CHECK_FALSE(repository.updateExpense({99, 10.0, QDate(2026, 11, 6), ""}));
     CHECK_FALSE(repository.deleteExpense(99));
@@ -133,22 +141,87 @@ TEST_CASE("updateExpense and deleteExpense fail for an unknown expense") {
     CHECK(repository.totalSpent() == doctest::Approx(55.5));
 }
 
-// edge case: saving the term again changes it instead of adding a second term
-TEST_CASE("Saving the term twice keeps one term with the new values") {
+// edge case: saving the same term again updates its row instead of adding a second term
+TEST_CASE("Saving a loaded term again updates the same row") {
     requireQtApplication();
     BudgetRepository repository(":memory:");
     Budget budget = sampleBudget();
     saveAll(repository, budget);
+    const int budgetId = budget.getBudgetId();
 
     REQUIRE(budget.setTerm(2000.0, 0.0, QDate(2026, 11, 3), QDate(2026, 12, 9)) == TermError::None);
+    CHECK(budget.getBudgetId() == budgetId);  // an edit of this term, not a new one
     CHECK(repository.saveTerm(budget));
     const std::optional<Budget> loaded = repository.load();
     REQUIRE(loaded);
+    CHECK(loaded->getBudgetId() == budgetId);
     CHECK(loaded->getReceivedAmount() == doctest::Approx(2000.0));
     CHECK(loaded->getSavingsAmount() == 0.0);
     CHECK(loaded->getStartDate() == QDate(2026, 11, 3));
     CHECK(loaded->getNextTransferDate() == QDate(2026, 12, 9));
     CHECK(loaded->getExpenses().size() == 2);
+}
+
+// normal case (M2 feedback): a new term gets its own row, and last term's
+// purchases stay with last term instead of following the new term
+TEST_CASE("A new term is saved as its own row and keeps last term's purchases") {
+    requireQtApplication();
+    QTemporaryDir folder;
+    REQUIRE(folder.isValid());
+    const QString path = folder.filePath("budget.db");
+    int lastTermId = 0;
+    {
+        BudgetRepository repository(path);
+        Budget lastTerm = sampleBudget();
+        saveAll(repository, lastTerm);
+        lastTermId = lastTerm.getBudgetId();
+        REQUIRE(lastTermId > 0);
+
+        Budget next;
+        REQUIRE(next.setTerm(900.0, 0.0, NEXT_TRANSFER, QDate(2027, 1, 2)) == TermError::None);
+        REQUIRE(repository.saveTerm(next));
+        CHECK(next.getBudgetId() != lastTermId);
+
+        const std::optional<Budget> loaded = repository.load();
+        REQUIRE(loaded);
+        CHECK(loaded->getBudgetId() == next.getBudgetId());
+        CHECK(loaded->getExpenses().empty());
+        CHECK(loaded->getTotalExpenses() == 0.0);
+        CHECK(repository.totalSpent() == 0.0);
+    }
+
+    // Last term's row and its purchases are still in the database, under last term's id.
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "check_last_term");
+        db.setDatabaseName(path);
+        REQUIRE(db.open());
+        {
+            QSqlQuery query(db);
+            REQUIRE(query.exec(QString("SELECT COUNT(*) FROM expense WHERE budget_id = %1").arg(lastTermId)));
+            REQUIRE(query.next());
+            CHECK(query.value(0).toInt() == 2);
+        }
+        db.close();
+    }
+    QSqlDatabase::removeDatabase("check_last_term");
+}
+
+// normal case (M2 feedback): purchase ids are unique across terms, so a new term
+// does not take an id that an older term already has
+TEST_CASE("Purchase ids are unique across terms") {
+    requireQtApplication();
+    BudgetRepository repository(":memory:");
+    Budget lastTerm = sampleBudget();  // ids 1 and 2
+    saveAll(repository, lastTerm);
+
+    Budget next;
+    REQUIRE(next.setTerm(900.0, 0.0, NEXT_TRANSFER, QDate(2027, 1, 2)) == TermError::None);
+    REQUIRE(repository.saveTerm(next));
+
+    CHECK(repository.nextExpenseId() == 3);
+    REQUIRE(repository.insertExpense(next.getBudgetId(), {repository.nextExpenseId(), 5.0, QDate(2026, 12, 5), "Coffee"}));
+    CHECK(repository.totalSpent() == doctest::Approx(5.0));  // only the current term
+    CHECK(repository.nextExpenseId() == 4);
 }
 
 // normal case: data in a database file is still there when the app opens it again
@@ -159,7 +232,8 @@ TEST_CASE("Data saved to a file is still there after reopening") {
     const QString path = folder.filePath("budget.db");
     {
         BudgetRepository repository(path);
-        saveAll(repository, sampleBudget());
+        Budget budget = sampleBudget();
+        saveAll(repository, budget);
     }
     BudgetRepository reopened(path);
     const std::optional<Budget> loaded = reopened.load();
@@ -184,43 +258,30 @@ TEST_CASE("A damaged database file does not open") {
     CHECK_FALSE(repository.lastError().isEmpty());
 }
 
-// edge case: last term's expenses come back after a restart, and loading is not an undo step
-TEST_CASE("Expenses outside the current term load back and leave nothing to undo") {
-    requireQtApplication();
-    BudgetRepository repository(":memory:");
-    Budget budget = sampleBudget();
-    REQUIRE(budget.setTerm(900.0, 0.0, NEXT_TRANSFER, QDate(2027, 1, 2)) == TermError::None);
-    saveAll(repository, budget);
-
-    const std::optional<Budget> loaded = repository.load();
-    REQUIRE(loaded);
-    CHECK(loaded->getExpenses().size() == 2);
-    CHECK(loaded->getTotalExpenses() == 0.0);
-    CHECK_FALSE(loaded->getLastChange());
-    // the SQL total also counts only the current term
-    CHECK(repository.totalSpent() == 0.0);
-}
-
 // wrong case: each failed change gives its own reason, even when it is the first error
 TEST_CASE("updateExpense and deleteExpense each give a reason when nothing matched") {
     requireQtApplication();
     BudgetRepository updating(":memory:");
-    saveAll(updating, sampleBudget());
+    Budget updatingBudget = sampleBudget();
+    saveAll(updating, updatingBudget);
     CHECK_FALSE(updating.updateExpense({99, 10.0, QDate(2026, 11, 6), ""}));
     CHECK_FALSE(updating.lastError().isEmpty());
 
     BudgetRepository deleting(":memory:");
-    saveAll(deleting, sampleBudget());
+    Budget deletingBudget = sampleBudget();
+    saveAll(deleting, deletingBudget);
     CHECK_FALSE(deleting.deleteExpense(99));
     CHECK_FALSE(deleting.lastError().isEmpty());
 }
 
-// wrong case: an expense row must belong to a saved term (expense.budget_id references budget)
-TEST_CASE("insertExpense fails when no term has been saved") {
+// wrong case: a purchase row must belong to a saved term
+TEST_CASE("insertExpense fails when the term is not saved") {
     requireQtApplication();
     BudgetRepository repository(":memory:");
 
-    CHECK_FALSE(repository.insertExpense({1, 40.0, QDate(2026, 11, 3), "Groceries"}));
+    CHECK_FALSE(repository.insertExpense(0, {1, 40.0, QDate(2026, 11, 3), "Groceries"}));
+    CHECK_FALSE(repository.lastError().isEmpty());
+    CHECK_FALSE(repository.insertExpense(99, {1, 40.0, QDate(2026, 11, 3), "Groceries"}));
     CHECK(repository.totalSpent() == 0.0);
 }
 
