@@ -12,6 +12,7 @@
 
 #include "Budget.h"
 #include "BudgetRepository.h"
+#include "Database.h"
 #include "ExpenseController.h"
 #include "MainWindow.h"
 #include "StatusController.h"
@@ -25,12 +26,13 @@ int main(int argc, char* argv[]) {
     // %APPDATA%/Group6BudgetManager on Windows, so it survives rebuilds.
     const QString dataFolder = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dataFolder);
-    BudgetRepository repository(dataFolder + "/budget.db");
-    if (!repository.isOpen()) {
+    Database database(dataFolder + "/budget.db");
+    if (!database.isOpen()) {
         QMessageBox::critical(nullptr, "Budget Manager",
-                              "Couldn't open the budget database: " + repository.lastError());
+                              "Couldn't open the budget database: " + database.lastError());
         return 1;
     }
+    BudgetRepository repository(database);
 
     Budget budget = repository.load().value_or(Budget());
     TermController termController(budget, repository);

@@ -4,8 +4,11 @@
 #include <QWidget>
 
 class QTabWidget;
+class AffordView;
+class CategoriesView;
 class ExpenseController;
 class ExpensesView;
+class ExtraMoneyView;
 class StatusController;
 class StatusView;
 class TermController;
@@ -27,6 +30,9 @@ private:
     StatusView* statusView;
     ExpensesView* expensesView;
     TermSetupView* termSetupView;
+    CategoriesView* categoriesView;
+    ExtraMoneyView* extraMoneyView;
+    AffordView* affordView;
 };
 
 #endif

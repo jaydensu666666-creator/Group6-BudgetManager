@@ -112,17 +112,23 @@ just last. Spend $410 instead and it warns you will run out around Dec 1.
 ## Project architecture
 
 The app follows MVC. Views send every action to a controller, controllers update
-the model, and only the model touches the database (only `BudgetRepository` runs
-SQL). The database keeps one budget row per term, and every purchase names the
-term it belongs to, so starting a new term can not pull last term's purchases
-into it. Views also use two small helpers that hold no data: `Money` to show
-amounts and `ViewStyle` for shared colors.
+the model, and only the storage classes run SQL. `Database` opens `budget.db` and
+makes every table in the ER diagram in one place; the repositories read and write
+those tables and nobody else does. The database keeps one budget row per term,
+and every purchase names the term it belongs to, so starting a new term can not
+pull last term's purchases into it. Views also use two small helpers that hold no
+data: `Money` to show amounts and `ViewStyle` for shared colors.
+
+The final project adds tables for categories, the limits per term, extra money and
+the savings goal, and the three pages for the new features are in place as empty
+pages, so each feature fills its own page without changing the tab order.
 
 | Layer | File | What it does |
 |---|---|---|
 | Model | `src/Budget.h/.cpp` | The term's money and its expenses; every calculation (money left, pace, this week) and undo |
 | Model | `src/Expense.h` | One recorded purchase |
-| Model | `src/BudgetRepository.h/.cpp` | Saves and loads the current term and its purchases with SQLite, one budget row per term (the only class that runs SQL) |
+| Storage | `src/Database.h/.cpp` | Opens `budget.db` and makes every table in the ER diagram (the only place tables are created) |
+| Storage | `src/BudgetRepository.h/.cpp` | Saves and loads the current term and its purchases, one budget row per term |
 | Helper | `src/Money.h/.cpp` | Reads amounts the user typed and formats them as `-$2,500.00` (used by every layer) |
 | Controller | `src/TermController.h/.cpp` | Feature: Planning the term |
 | Controller | `src/ExpenseController.h/.cpp` | Feature: Recording money in and out (with undo) |
@@ -132,9 +138,11 @@ amounts and `ViewStyle` for shared colors.
 | View | `src/StatusView.h/.cpp` | Where I stand page (home) |
 | View | `src/MainWindow.h/.cpp` | Window title and tabs |
 | View | `src/ViewStyle.h` | Colors and date format shared by the views |
-| - | `src/ActionResult.h` | What a controller tells a view: worked or not, and the message |
+| View | `src/CategoriesView.h/.cpp` | "Where it goes" page: empty until the categories feature fills it |
+| View | `src/ExtraMoneyView.h/.cpp` | "Extra money" page: empty until the extra money and savings goal feature fills it |
+| View | `src/AffordView.h/.cpp` | "Can I afford it?" page: empty until that feature fills it |
 | - | `src/main.cpp` | Opens the database and connects the pieces |
-| Tests | `tests/*.cpp` | doctest unit tests for the model classes |
+| Tests | `tests/*.cpp` | doctest unit tests for the model, the storage classes and the database schema |
 
 Tech stack: C++17, Qt 6 Widgets for the interface, Qt SQL with SQLite for storage,
 doctest for unit tests, CMake for building, and GitHub Actions for CI.

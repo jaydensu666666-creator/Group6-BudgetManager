@@ -61,6 +61,7 @@ TermError Budget::setTerm(double newReceived, double newSavings,
         expenses.clear();
         lastChange.reset();
         budgetId = 0;  // the repository saves the next term as a new row
+        carryOver = false;  // a new term starts without last term's leftover
     }
     receivedAmount = Money::roundToCents(newReceived);
     savingsAmount = Money::roundToCents(newSavings);
