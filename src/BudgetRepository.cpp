@@ -64,6 +64,8 @@ bool BudgetRepository::runStatement(const QString& sql) {
 }
 
 bool BudgetRepository::createTables() {
+    // One budget row per term (the old MVP reused budget_id 1 for every term,
+    // which is what let last term's purchases leak into the new term).
     return runStatement("PRAGMA foreign_keys = ON") &&
            runStatement(
                "CREATE TABLE IF NOT EXISTS budget ("
@@ -84,21 +86,25 @@ bool BudgetRepository::createTables() {
 std::optional<Budget> BudgetRepository::load() {
     QSqlDatabase db = QSqlDatabase::database(connectionName);
     QSqlQuery termQuery(db);
+    // The term the user is on is the newest one.
     termQuery.prepare(
-        "SELECT total_amount, savings_amount, start_date, end_date FROM budget WHERE budget_id = ?");
-    termQuery.addBindValue(CURRENT_BUDGET_ID);
+        "SELECT budget_id, total_amount, savings_amount, start_date, end_date FROM budget"
+        " ORDER BY budget_id DESC LIMIT 1");
     if (!run(termQuery) || !termQuery.next()) {
         return std::nullopt;
     }
     Budget budget;
-    budget.setTerm(termQuery.value(0).toDouble(), termQuery.value(1).toDouble(),
-                   QDate::fromString(termQuery.value(2).toString(), DATE_FORMAT),
-                   QDate::fromString(termQuery.value(3).toString(), DATE_FORMAT));
+    budget.setBudgetId(termQuery.value(0).toInt());
+    budget.setTerm(termQuery.value(1).toDouble(), termQuery.value(2).toDouble(),
+                   QDate::fromString(termQuery.value(3).toString(), DATE_FORMAT),
+                   QDate::fromString(termQuery.value(4).toString(), DATE_FORMAT));
 
+    // Only this term's purchases: that is what keeps the last term's purchases out
+    // of the totals after a new term has started.
     QSqlQuery expenseQuery(db);
     expenseQuery.prepare(
         "SELECT expense_id, amount, date, description FROM expense WHERE budget_id = ? ORDER BY expense_id");
-    expenseQuery.addBindValue(CURRENT_BUDGET_ID);
+    expenseQuery.addBindValue(budget.getBudgetId());
     if (!run(expenseQuery)) {
         return std::nullopt;
     }
@@ -113,28 +119,52 @@ std::optional<Budget> BudgetRepository::load() {
     return budget;
 }
 
-bool BudgetRepository::saveTerm(const Budget& budget) {
+bool BudgetRepository::saveTerm(Budget& budget) {
     QSqlQuery query(QSqlDatabase::database(connectionName));
+    if (budget.getBudgetId() == 0) {
+        // A term that has just been started gets its own row, so the last term's
+        // row and purchases stay with the last term.
+        query.prepare(
+            "INSERT INTO budget (total_amount, start_date, end_date, savings_amount) VALUES (?, ?, ?, ?)");
+        query.addBindValue(budget.getReceivedAmount());
+        query.addBindValue(budget.getStartDate().toString(DATE_FORMAT));
+        query.addBindValue(budget.getNextTransferDate().toString(DATE_FORMAT));
+        query.addBindValue(budget.getSavingsAmount());
+        if (!run(query)) {
+            return false;
+        }
+        budget.setBudgetId(query.lastInsertId().toInt());
+        return true;
+    }
+
     query.prepare(
-        "INSERT INTO budget (budget_id, total_amount, start_date, end_date, savings_amount)"
-        " VALUES (?, ?, ?, ?, ?)"
-        " ON CONFLICT(budget_id) DO UPDATE SET total_amount = excluded.total_amount,"
-        " start_date = excluded.start_date, end_date = excluded.end_date,"
-        " savings_amount = excluded.savings_amount");
-    query.addBindValue(CURRENT_BUDGET_ID);
+        "UPDATE budget SET total_amount = ?, start_date = ?, end_date = ?, savings_amount = ?"
+        " WHERE budget_id = ?");
     query.addBindValue(budget.getReceivedAmount());
     query.addBindValue(budget.getStartDate().toString(DATE_FORMAT));
     query.addBindValue(budget.getNextTransferDate().toString(DATE_FORMAT));
     query.addBindValue(budget.getSavingsAmount());
-    return run(query);
+    query.addBindValue(budget.getBudgetId());
+    if (!run(query)) {
+        return false;
+    }
+    if (query.numRowsAffected() != 1) {
+        error = "That term is no longer in the database.";
+        return false;
+    }
+    return true;
 }
 
-bool BudgetRepository::insertExpense(const Expense& expense) {
+bool BudgetRepository::insertExpense(int budgetId, const Expense& expense) {
+    if (budgetId <= 0) {
+        error = "Save the term before recording a purchase.";
+        return false;
+    }
     QSqlQuery query(QSqlDatabase::database(connectionName));
     query.prepare(
         "INSERT INTO expense (expense_id, budget_id, amount, date, description) VALUES (?, ?, ?, ?, ?)");
     query.addBindValue(expense.id);
-    query.addBindValue(CURRENT_BUDGET_ID);
+    query.addBindValue(budgetId);
     query.addBindValue(expense.amount);
     query.addBindValue(expense.date.toString(DATE_FORMAT));
     query.addBindValue(expense.description);
@@ -174,14 +204,23 @@ bool BudgetRepository::deleteExpense(int expenseId) {
 
 double BudgetRepository::totalSpent() {
     QSqlQuery query(QSqlDatabase::database(connectionName));
-    // ISO dates (yyyy-MM-dd) compare correctly as text. Like Budget, count only the
-    // expenses inside the term: from the start date up to the day before the transfer.
+    // The current term is the newest budget row; its purchases are the whole total,
+    // with no date matching (M2 feedback).
     query.prepare(
-        "SELECT COALESCE(SUM(e.amount), 0) FROM expense e JOIN budget b ON b.budget_id = e.budget_id"
-        " WHERE e.budget_id = ? AND e.date >= b.start_date AND e.date < b.end_date");
-    query.addBindValue(CURRENT_BUDGET_ID);
+        "SELECT COALESCE(SUM(amount), 0) FROM expense WHERE budget_id ="
+        " (SELECT budget_id FROM budget ORDER BY budget_id DESC LIMIT 1)");
     if (!run(query) || !query.next()) {
         return 0.0;
     }
     return Money::roundToCents(query.value(0).toDouble());
+}
+
+int BudgetRepository::nextExpenseId() {
+    QSqlQuery query(QSqlDatabase::database(connectionName));
+    // Across every term, because expense_id is the primary key of one table.
+    query.prepare("SELECT COALESCE(MAX(expense_id), 0) + 1 FROM expense");
+    if (!run(query) || !query.next()) {
+        return 1;
+    }
+    return query.value(0).toInt();
 }

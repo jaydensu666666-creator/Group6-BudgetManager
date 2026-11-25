@@ -137,13 +137,12 @@ TEST_CASE("Last term's spending earlier in the week does not count in a new term
     CHECK(budget.leftToSpendThisWeek(NEXT_TRANSFER) == doctest::Approx(140.0));
 }
 
-// edge case: a purchase on the transfer date belongs to the next term, so it is not part of the
-// last week even when it is in the list (here loaded from the database)
-TEST_CASE("Spending on the transfer date does not count for the last week") {
+// edge case (M2 feedback): the transfer day belongs to the next term, so a purchase
+// dated on it can not be added to this term at all, instead of being counted here
+TEST_CASE("A purchase on the transfer date is refused instead of counted") {
     Budget budget = term();
-    budget.loadExpense({1, 50.0, NEXT_TRANSFER, "Next term"});
-    const QDate lastMonday(2026, 11, 30);
-
-    CHECK(budget.spentThisWeek(lastMonday) == 0.0);
-    CHECK(budget.leftToSpendThisWeek(lastMonday) == doctest::Approx(1200.0));
+    CHECK(budget.addExpense({1, 50.0, NEXT_TRANSFER, "Next term"}) == ExpenseError::OnOrAfterNextTransfer);
+    CHECK(budget.getTotalExpenses() == 0.0);
+    CHECK(budget.spentThisWeek(QDate(2026, 11, 30)) == 0.0);
+    CHECK(budget.leftToSpendThisWeek(QDate(2026, 11, 30)) == doctest::Approx(1200.0));
 }

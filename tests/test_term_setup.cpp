@@ -109,7 +109,7 @@ TEST_CASE("Changing the dates is refused when an expense would fall outside the 
 }
 
 // normal case: once the next transfer arrives, a new term can start; last term's
-// expenses are kept but no longer counted or listed
+// expenses belong to last term, so the new term starts empty
 TEST_CASE("Starting a new term after the transfer date leaves the old expenses behind") {
     Budget budget;
     REQUIRE(budget.setTerm(1000.0, 0.0, START, NEXT_TRANSFER) == TermError::None);
@@ -119,7 +119,8 @@ TEST_CASE("Starting a new term after the transfer date leaves the old expenses b
     CHECK(budget.getTotalExpenses() == 0.0);
     CHECK(budget.getRemainingBudget() == doctest::Approx(800.0));
     CHECK(budget.termExpensesNewestFirst().empty());
-    CHECK(budget.getExpenses().size() == 1);  // still saved, just not part of this term
+    CHECK(budget.getExpenses().empty());  // still saved, with last term's budget_id
+    CHECK(budget.getLastChange() == std::nullopt);
 }
 
 // wrong case: in the new term, its own expenses still can't be pushed out, but old ones don't block

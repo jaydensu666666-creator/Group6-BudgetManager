@@ -45,16 +45,22 @@ TermError Budget::setTerm(double newReceived, double newSavings,
     if (newNextTransfer <= newStart) {
         return TermError::TransferNotAfterStart;
     }
-    // Moving the start to the old transfer date or later starts a new term, and the
-    // old term's expenses stay behind. Any other change must not silently push this
-    // term's expenses out of the dates.
+    // A start on or after the current next transfer date begins the next term. Its
+    // expenses belong to the old term (their own budget_id in the database), so the
+    // new term starts empty and with nothing to undo (M2 feedback). Any other change
+    // must not silently push this term's expenses out of the dates.
     const bool startingNewTerm = hasTerm() && newStart >= nextTransferDate;
     if (!startingNewTerm) {
         for (const Expense& expense : expenses) {
-            if (isInTerm(expense.date) && !fitsTerm(expense.date, newStart, newNextTransfer)) {
+            if (!fitsTerm(expense.date, newStart, newNextTransfer)) {
                 return TermError::ExpensesOutsideTerm;
             }
         }
+    }
+    if (startingNewTerm) {
+        expenses.clear();
+        lastChange.reset();
+        budgetId = 0;  // the repository saves the next term as a new row
     }
     receivedAmount = Money::roundToCents(newReceived);
     savingsAmount = Money::roundToCents(newSavings);
@@ -72,10 +78,6 @@ bool Budget::fitsTerm(const QDate& date, const QDate& start, const QDate& nextTr
     const bool afterStart = !start.isValid() || date >= start;
     const bool beforeTransfer = !nextTransfer.isValid() || date < nextTransfer;
     return afterStart && beforeTransfer;
-}
-
-bool Budget::isInTerm(const QDate& date) const {
-    return fitsTerm(date, startDate, nextTransferDate);
 }
 
 ExpenseError Budget::checkExpense(double amount, const QDate& date, const QString& description) const {
@@ -212,12 +214,7 @@ std::optional<Expense> Budget::findExpense(int expenseId) const {
 }
 
 std::vector<Expense> Budget::termExpensesNewestFirst() const {
-    std::vector<Expense> inTerm;
-    for (const Expense& expense : expenses) {
-        if (isInTerm(expense.date)) {
-            inTerm.push_back(expense);
-        }
-    }
+    std::vector<Expense> inTerm = expenses;
     // Same date: the one recorded later (higher id) comes first.
     std::sort(inTerm.begin(), inTerm.end(), [](const Expense& a, const Expense& b) {
         return a.date != b.date ? a.date > b.date : a.id > b.id;
@@ -260,7 +257,14 @@ double Budget::getSpendableAmount() const {
 }
 
 double Budget::getTotalExpenses() const {
-    return totalBetween(startDate, nextTransferDate);
+    // Every expense in a Budget belongs to this term by budget_id, so the total is
+    // the whole list; no date matching (M2 feedback: the dates alone let last
+    // term's purchases come back into a new term).
+    double total = 0.0;
+    for (const Expense& expense : expenses) {
+        total += expense.amount;
+    }
+    return Money::roundToCents(total);
 }
 
 double Budget::getRemainingBudget() const {

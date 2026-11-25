@@ -82,7 +82,7 @@ TEST_CASE("Moving the next term's start date back does not bring last term's pur
     Budget previous = lastTerm();
     REQUIRE(repository.saveTerm(previous));
     for (const Expense& expense : previous.getExpenses()) {
-        REQUIRE(repository.insertExpense(expense));
+        REQUIRE(repository.insertExpense(previous.getBudgetId(), expense));
     }
 
     // The transfer arrived, so the user starts the next term.

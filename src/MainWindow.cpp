@@ -26,9 +26,10 @@ MainWindow::MainWindow(TermController& termController, ExpenseController& expens
     termSetupView = new TermSetupView(termController);
 
     tabs = new QTabWidget;
-    tabs->addTab(statusView, "Where I stand");
-    tabs->addTab(expensesView, "Expenses");
+    // The tabs follow the order the user works in (M2 feedback).
     tabs->addTab(termSetupView, "Term setup");
+    tabs->addTab(expensesView, "Expenses");
+    tabs->addTab(statusView, "Where I stand");
 
     QVBoxLayout* layout = new QVBoxLayout(this);
     layout->addWidget(title);
@@ -43,8 +44,11 @@ MainWindow::MainWindow(TermController& termController, ExpenseController& expens
     // (the app may have been left open past midnight or into a new week).
     connect(tabs, &QTabWidget::currentChanged, statusView, &StatusView::refresh);
 
-    // A first-time user has nothing to look at yet, so start them on setup.
-    if (!hasTerm) {
+    // A first-time user has nothing to look at yet, so start them on setup;
+    // otherwise open on the page they came to check (S-17).
+    if (hasTerm) {
+        tabs->setCurrentWidget(statusView);
+    } else {
         tabs->setCurrentWidget(termSetupView);
     }
 }

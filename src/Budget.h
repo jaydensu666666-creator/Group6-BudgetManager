@@ -43,14 +43,16 @@ struct ExpenseChange {
 };
 
 // The money for one term: what the student received, what they set aside for
-// saving, when the next transfer comes, and the expenses recorded.
+// saving, when the next transfer comes, and the expenses recorded in it.
 // This is the Budget entity in our ER diagram (Term + Transfer in the P4 CRC).
 //
-// The term is the dates from the start date up to the day before the next
-// transfer. Totals only count expenses inside those dates and are calculated
-// from the list every time instead of being stored, so an edited or removed
-// expense can never leave an old total behind (P5 feedback). Expenses from an
-// earlier term stay in the list (and the database) but are not counted.
+// One Budget is one term: a Budget object holds this term's expenses and
+// nothing else, and the database keeps one budget row per term (M2 feedback).
+// A purchase belongs to its term by budget_id, never by its date, so moving a
+// term's dates can not pull another term's purchases into it, and starting a
+// new term leaves the old purchases and the old undo step behind.
+// Totals are calculated from the list every time instead of being stored, so an
+// edited or removed expense can never leave an old total behind (P5 feedback).
 // Methods that depend on the date take "today" as a parameter so tests can fix it.
 class Budget {
 public:
@@ -64,9 +66,15 @@ public:
     explicit Budget(double receivedAmount);
 
     // Planning the term
+    // A start date on or after the current next transfer date starts the next
+    // term: this term's expenses and its undo step are left with the old term.
     TermError setTerm(double receivedAmount, double savingsAmount,
                       const QDate& startDate, const QDate& nextTransferDate);
     bool hasTerm() const;
+    // The row in the budget table this term is saved in, or 0 when it has not
+    // been saved yet (a term that has just been started).
+    int getBudgetId() const { return budgetId; }
+    void setBudgetId(int id) { budgetId = id; }
     double getReceivedAmount() const { return receivedAmount; }
     double getSavingsAmount() const { return savingsAmount; }
     QDate getStartDate() const { return startDate; }
@@ -86,8 +94,11 @@ public:
     // so a saved expense never disappears just because the term was edited.
     void loadExpense(const Expense& expense);
     std::optional<Expense> findExpense(int expenseId) const;
-    const std::vector<Expense>& getExpenses() const { return expenses; }  // every term
-    std::vector<Expense> termExpensesNewestFirst() const;                 // this term only
+    const std::vector<Expense>& getExpenses() const { return expenses; }  // this term
+    std::vector<Expense> termExpensesNewestFirst() const;
+    // Highest id in this term plus one. Purchase ids have to be unique across
+    // every term, so the app asks BudgetRepository for the id of a new purchase;
+    // this one is for a model used on its own (the walking skeleton and the tests).
     int nextExpenseId() const;
     // The date a new expense starts on: today, or the start date if the term has
     // not started yet. After the term ends it stays today, so the user is told to
@@ -110,6 +121,7 @@ public:
     double leftToSpendThisWeek(const QDate& today) const;
 
 private:
+    int budgetId = 0;
     double receivedAmount = 0.0;
     double savingsAmount = 0.0;
     QDate startDate;
@@ -117,7 +129,6 @@ private:
     std::vector<Expense> expenses;
     std::optional<ExpenseChange> lastChange;
 
-    bool isInTerm(const QDate& date) const;
     // Sum of expenses dated from `from` up to but not including `before`.
     // An invalid date means "no limit" on that side.
     double totalBetween(const QDate& from, const QDate& before) const;
