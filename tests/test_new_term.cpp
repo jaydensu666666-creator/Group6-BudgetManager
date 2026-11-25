@@ -20,6 +20,7 @@
 
 #include "Budget.h"
 #include "BudgetRepository.h"
+#include "Database.h"
 
 namespace {
 const QDate START(2026, 11, 2);
@@ -77,7 +78,8 @@ TEST_CASE("A new term starts with no purchases of its own") {
 // them back.
 TEST_CASE("Moving the next term's start date back does not bring last term's purchases back") {
     requireQtApplication();
-    BudgetRepository repository(":memory:");
+    Database database(":memory:");
+    BudgetRepository repository(database);
 
     Budget previous = lastTerm();
     REQUIRE(repository.saveTerm(previous));

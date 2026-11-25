@@ -4,7 +4,10 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 
+#include "AffordView.h"
+#include "CategoriesView.h"
 #include "ExpensesView.h"
+#include "ExtraMoneyView.h"
 #include "StatusView.h"
 #include "TermSetupView.h"
 #include "ViewStyle.h"
@@ -24,12 +27,20 @@ MainWindow::MainWindow(TermController& termController, ExpenseController& expens
     statusView = new StatusView(statusController);
     expensesView = new ExpensesView(expenseController);
     termSetupView = new TermSetupView(termController);
+    // The pages for the final project features. They are empty for now; each
+    // feature fills its own page, so the tab order does not change again.
+    categoriesView = new CategoriesView;
+    extraMoneyView = new ExtraMoneyView;
+    affordView = new AffordView;
 
     tabs = new QTabWidget;
-    // The tabs follow the order the user works in (M2 feedback).
+    // The tabs follow the order the user works in (M2 feedback), then the new pages.
     tabs->addTab(termSetupView, "Term setup");
     tabs->addTab(expensesView, "Expenses");
     tabs->addTab(statusView, "Where I stand");
+    tabs->addTab(categoriesView, "Where it goes");
+    tabs->addTab(extraMoneyView, "Extra money");
+    tabs->addTab(affordView, "Can I afford it?");
 
     QVBoxLayout* layout = new QVBoxLayout(this);
     layout->addWidget(title);

@@ -79,6 +79,10 @@ public:
     double getSavingsAmount() const { return savingsAmount; }
     QDate getStartDate() const { return startDate; }
     QDate getNextTransferDate() const { return nextTransferDate; }
+    // The user's yes/no choice to bring what was left from last term into this
+    // one. The amount is calculated, never stored (final project ER diagram).
+    bool getCarryOver() const { return carryOver; }
+    void setCarryOver(bool value) { carryOver = value; }
 
     // Recording money in and out
     ExpenseError checkExpense(double amount, const QDate& date, const QString& description) const;
@@ -126,6 +130,7 @@ private:
     double savingsAmount = 0.0;
     QDate startDate;
     QDate nextTransferDate;
+    bool carryOver = false;
     std::vector<Expense> expenses;
     std::optional<ExpenseChange> lastChange;
 

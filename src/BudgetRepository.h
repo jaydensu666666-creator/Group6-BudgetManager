@@ -8,11 +8,13 @@
 #include "Budget.h"
 #include "Expense.h"
 
+class Database;
 class QSqlQuery;
 
 // Saves the terms and their expenses in SQLite so they are still there after the
-// app closes. This is the only class that runs SQL; the tables match the ER
-// diagram (docs/ER_diagram.drawio.png).
+// app closes. The tables are made by Database, which owns the connection; this is
+// one of the three repositories and the only one that runs SQL on budget and
+// expense (CategoryRepository and SavingsRepository own their tables).
 //
 // The budget table has one row per term and every expense row names the term it
 // belongs to, so a purchase belongs to its term by budget_id and never by its
@@ -21,15 +23,15 @@ class QSqlQuery;
 // reach the last term's undo step.
 class BudgetRepository {
 public:
-    // Pass ":memory:" for a throwaway database (used by the tests).
-    explicit BudgetRepository(const QString& databasePath);
-    ~BudgetRepository();
+    explicit BudgetRepository(Database& database);
 
     BudgetRepository(const BudgetRepository&) = delete;
     BudgetRepository& operator=(const BudgetRepository&) = delete;
 
     bool isOpen() const;
-    QString lastError() const { return error; }
+    // The reason the last query failed; the database's own error when this
+    // repository has not recorded one.
+    QString lastError() const;
 
     // Returns the term the app is on (the newest budget row) with that term's
     // expenses, or nothing if no term has been set up yet.
@@ -51,13 +53,10 @@ public:
     int nextExpenseId();
 
 private:
-    QString connectionName;
+    Database& database;
     QString error;
-    bool tablesReady = false;  // false for a damaged file that opened but is not a database
 
-    bool createTables();
     bool run(QSqlQuery& query);
-    bool runStatement(const QString& sql);
 };
 
 #endif
